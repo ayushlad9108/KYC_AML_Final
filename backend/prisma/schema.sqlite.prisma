@@ -1,0 +1,229 @@
+// SQLite version of the schema (for local development without Docker)
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// User Management
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  phone     String?
+  password  String
+  role      String   @default("CUSTOMER") // UserRole enum as string for SQLite
+  status    String   @default("PENDING")  // UserStatus enum as string
+  riskScore Int      @default(0)
+  kycStatus String   @default("NOT_STARTED") // KYCStatus enum as string
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  profile         UserProfile?
+  kycVerifications KYCVerification[]
+  documents       Document[]
+  transactions    Transaction[]
+  amlAlerts       AMLAlert[]
+  auditLogs       AuditLog[]
+  assignedAlerts  AMLAlert[] @relation("AssignedAnalyst")
+  
+  @@map("users")
+}
+
+model UserProfile {
+  id          String    @id @default(cuid())
+  userId      String    @unique
+  firstName   String
+  lastName    String
+  dateOfBirth DateTime?
+  nationality String?
+  occupation  String?
+  
+  // Address information
+  street      String?
+  city        String?
+  state       String?
+  country     String?
+  postalCode  String?
+  
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("user_profiles")
+}
+
+// KYC Verification
+model KYCVerification {
+  id                 String             @id @default(cuid())
+  userId             String
+  documentType       String             // DocumentType enum as string
+  documentNumber     String?
+  verificationStatus String             @default("PENDING") // VerificationStatus enum as string
+  confidenceScore    Int?
+  verificationMethod String?
+  verifiedAt         DateTime?
+  expiresAt          DateTime?
+  verificationData   String             @default("{}") // JSON as string for SQLite
+  createdAt          DateTime           @default(now())
+  
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documents          Document[]
+  livenessDetection  LivenessDetection?
+  
+  @@map("kyc_verifications")
+}
+
+// Document Storage
+model Document {
+  id                  String          @id @default(cuid())
+  userId              String
+  kycVerificationId   String?
+  documentType        String          // DocumentType enum as string
+  fileName            String
+  filePath            String
+  fileSize            Int
+  mimeType            String
+  fileHash            String
+  encryptionKeyId     String?
+  ocrData             String          @default("{}") // JSON as string
+  aiAnalysis          String          @default("{}") // JSON as string
+  processingStatus    String          @default("pending")
+  createdAt           DateTime        @default(now())
+  
+  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kycVerification     KYCVerification? @relation(fields: [kycVerificationId], references: [id])
+  
+  @@map("documents")
+}
+
+// Liveness Detection
+model LivenessDetection {
+  id                String          @id @default(cuid())
+  userId            String
+  kycVerificationId String          @unique
+  sessionId         String
+  livenessScore     Real            // Float as Real in SQLite
+  faceMatchScore    Real?
+  antiSpoofingScore Real
+  challenges        String          @default("[]") // JSON as string
+  result            String          @default("{}") // JSON as string
+  videoPath         String?
+  createdAt         DateTime        @default(now())
+  
+  kycVerification   KYCVerification @relation(fields: [kycVerificationId], references: [id], onDelete: Cascade)
+  
+  @@map("liveness_detections")
+}
+
+// Transaction Monitoring
+model Transaction {
+  id              String          @id @default(cuid())
+  userId          String
+  transactionType String          // TransactionType enum as string
+  amount          Real            // Decimal as Real in SQLite
+  currency        String          @default("INR")
+  counterpartyId  String?
+  description     String?
+  transactionTime DateTime        @default(now())
+  riskScore       Int             @default(0)
+  amlStatus       String          @default("CLEAR") // AMLStatus enum as string
+  metadata        String          @default("{}") // JSON as string
+  createdAt       DateTime        @default(now())
+  
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  counterparty    User?           @relation("CounterpartyTransactions", fields: [counterpartyId], references: [id])
+  amlAlerts       AMLAlert[]
+  
+  @@map("transactions")
+}
+
+// AML Alerts
+model AMLAlert {
+  id              String        @id @default(cuid())
+  userId          String
+  transactionId   String?
+  alertType       String
+  severity        String        @default("MEDIUM") // AlertSeverity enum as string
+  status          String        @default("OPEN")   // AlertStatus enum as string
+  triggeredRules  String        @default("[]")     // JSON as string
+  riskFactors     String        @default("{}")     // JSON as string
+  assignedTo      String?
+  resolvedAt      DateTime?
+  resolutionNotes String?
+  falsePositive   Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transaction     Transaction?  @relation(fields: [transactionId], references: [id])
+  assignedUser    User?         @relation("AssignedAnalyst", fields: [assignedTo], references: [id])
+  
+  @@map("aml_alerts")
+}
+
+// Compliance Rules
+model ComplianceRule {
+  id           String   @id @default(cuid())
+  ruleName     String
+  ruleType     String
+  conditions   String   // JSON as string
+  actions      String   // JSON as string
+  priority     Int      @default(1)
+  isActive     Boolean  @default(true)
+  jurisdiction String   @default("IN")
+  createdBy    String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  @@map("compliance_rules")
+}
+
+// Audit Trail
+model AuditLog {
+  id         String   @id @default(cuid())
+  entityType String
+  entityId   String
+  action     String
+  actorId    String?
+  actorType  String?
+  changes    String   @default("{}") // JSON as string
+  metadata   String   @default("{}") // JSON as string
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  
+  actor      User?    @relation(fields: [actorId], references: [id])
+  
+  @@map("audit_logs")
+}
+
+// Risk Scoring Cache
+model RiskScore {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  currentScore Int
+  factors     String   @default("{}") // JSON as string
+  lastUpdated DateTime @default(now())
+  expiresAt   DateTime
+  
+  @@map("risk_scores")
+}
+
+// Compliance Reports
+model ComplianceReport {
+  id          String       @id @default(cuid())
+  reportType  String       // ReportType enum as string
+  title       String
+  description String?
+  parameters  String       @default("{}") // JSON as string
+  generatedBy String
+  generatedAt DateTime     @default(now())
+  status      String       @default("GENERATING") // ReportStatus enum as string
+  filePath    String?
+  fileSize    Int?
+  jurisdiction String      @default("IN")
+  
+  @@map("compliance_reports")
+}
